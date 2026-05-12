@@ -1,0 +1,7 @@
+onid                    = "nechypak"
+key_name                = "cs312-key"
+admin_ssh_cidr          = "0.0.0.0/0"
+minecraft_client_cidr   = "0.0.0.0/0"
+control_instance_type   = "t3.micro"
+minecraft_instance_type = "t3.small"
+backup_bucket_name      = "ops3-nechypak-minecraft-backups"
