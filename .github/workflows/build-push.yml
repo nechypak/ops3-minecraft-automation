@@ -1,0 +1,79 @@
+name: Build and Push Minecraft Image to ECR
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ops3-minecraft-lab
+  IMAGE_TAG: mc-java21-v1
+  UPSTREAM_IMAGE: itzg/minecraft-server:2024.4.1-java21
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull pinned upstream Minecraft image
+        run: |
+          docker pull "${{ env.UPSTREAM_IMAGE }}"
+
+      - name: Smoke test Minecraft startup
+        run: |
+          docker run -d \
+            --name minecraft-smoke \
+            -e EULA=TRUE \
+            -e VERSION=1.21.1 \
+            -e MEMORY=1G \
+            "${{ env.UPSTREAM_IMAGE }}"
+
+          for i in $(seq 1 12); do
+            echo "Smoke test attempt $i..."
+            if docker logs minecraft-smoke 2>&1 | grep -q "Done"; then
+              echo "Minecraft initialized successfully."
+              docker logs minecraft-smoke 2>&1 | tail -40
+              docker stop minecraft-smoke
+              docker rm minecraft-smoke
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Minecraft did not finish startup in time."
+          docker logs minecraft-smoke 2>&1 | tail -120
+          docker stop minecraft-smoke || true
+          docker rm minecraft-smoke || true
+          exit 1
+
+      - name: Tag and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker tag "${{ env.UPSTREAM_IMAGE }}" \
+            "$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+
+          docker push "$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+
+      - name: Verify pushed image exists
+        run: |
+          aws ecr describe-images \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --image-ids imageTag="${{ env.IMAGE_TAG }}" \
+            --region "${{ env.AWS_REGION }}"
